@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="CorrectionBank logo" width="420">
+</p>
+
 # CorrectionBank
 
 A local, scoped memory of what went wrong with AI work, so the same mistake is not made twice.
