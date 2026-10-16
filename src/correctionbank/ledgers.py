@@ -14,6 +14,7 @@ from typing import Any
 from .core import (
     InputError,
     canonical,
+    coverage,
     database,
     digest,
     file_digest,
@@ -187,9 +188,27 @@ def failures(data: dict[str, Any], db_path: str | Path) -> dict[str, Any]:
             )
         if not cases:
             out.append(finding("NO_CASES", "No regression cases are stored for this scope."))
+    block: dict[str, Any] = {}
+    if action == "evaluate":
+        not_run = sum(1 for f in out if f["status"] == "NOT_RUN")
+        unknown = sum(1 for f in out if f["status"] == "UNKNOWN_CASE")
+        block = {
+            "coverage": coverage(
+                "cases",
+                len(cases),
+                len(cases) - not_run,
+                {"no_output_supplied": not_run},
+                notes=(
+                    [f"{unknown} supplied output(s) matched no stored case and were not compared"]
+                    if unknown
+                    else []
+                ),
+            )
+        }
     return report(
         "CorrectionBank Failures",
         out,
+        **block,
         cases=cases,
         scope="stores cases and compares outputs you supply; models are never run and meaning is not graded",
     )
@@ -345,9 +364,28 @@ def decisions(data: dict[str, Any], db_path: str | Path, root: str | Path) -> di
                 if anchors:
                     evidence["anchors"] = anchors
                 out.append(finding(status, message, **evidence))
+    block = {}
+    if action == "check":
+        current = [r for r in records if r["id"] not in superseded]
+        unwatched = sum(1 for r in current if not r["files"])
+        block = {
+            "coverage": coverage(
+                "decisions",
+                len(current),
+                len(current) - unwatched,
+                {"no_tracked_files": unwatched},
+                notes=[
+                    "a decision is watched through the files recorded with it; one without any "
+                    "can never report drift"
+                ]
+                if unwatched
+                else [],
+            )
+        }
     return report(
         "CorrectionBank Decisions",
         out,
+        **block,
         decisions=[{**d, "superseded": d["id"] in superseded} for d in records],
         scope="append-only through this tool; approvals are what you typed, not signatures",
     )

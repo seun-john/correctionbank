@@ -141,6 +141,30 @@ def test_bad_expectation_is_rejected_before_storing(db: Path) -> None:
 
 def test_no_cases(db: Path) -> None:
     assert statuses(evaluate(db, {})) == ["NO_CASES"]
+    assert evaluate(db, {})["coverage"]["items"] == 0
+
+
+def test_evaluate_coverage_counts_cases_that_were_run(db: Path) -> None:
+    add_case(db, "c1")
+    add_case(db, "c2")
+    add_case(db, "c3")
+    result = evaluate(db, {"c1": "The DOI is unknown.", "c2": "bad 10.9999/x", "zzz": "stray"})
+    block = result["coverage"]
+    assert (block["unit"], block["items"], block["decided"], block["undecided"]) == (
+        "cases",
+        3,
+        2,
+        1,
+    )
+    assert block["reasons"] == {"no_output_supplied": 1}
+    assert "1 supplied output(s) matched no stored case" in block["notes"][0]
+    assert block["decided"] + block["undecided"] == block["items"]
+
+
+def test_only_checks_carry_coverage_not_adds_or_lists(db: Path) -> None:
+    assert "coverage" not in add_case(db, "c1")
+    assert "coverage" not in failures({"scope": "bot", "action": "list"}, db)
+    assert "coverage" not in add_rule(db)
 
 
 # -- decisions -----------------------------------------------------------------------------
@@ -173,6 +197,46 @@ def test_drift_and_missing_file(db: Path, tmp_path: Path) -> None:
     result = check(db, tmp_path)
     assert statuses(result) == ["DECISION_DRIFT"]
     assert result["findings"][0]["evidence"]["actual"] is None
+
+
+def test_decision_coverage_counts_decisions_that_can_be_watched(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("1", encoding="utf-8")
+    decide(db, tmp_path, "D1", files=["a.txt"])
+    decide(db, tmp_path, "D2")  # no tracked files: nothing can ever show drift
+    decide(db, tmp_path, "D3", files=["a.txt"])
+    decide(db, tmp_path, "D4", supersedes="D3")  # D3 is replaced; D4 has no files
+    block = check(db, tmp_path)["coverage"]
+    assert (block["unit"], block["items"], block["decided"], block["undecided"]) == (
+        "decisions",
+        3,
+        1,
+        2,
+    )
+    assert block["reasons"] == {"no_tracked_files": 2}
+    assert "can never report drift" in block["notes"][0]
+    assert block["decided"] + block["undecided"] == block["items"]
+
+
+def test_decision_coverage_is_only_on_check(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("1", encoding="utf-8")
+    assert "coverage" not in decide(db, tmp_path, "D1", files=["a.txt"])
+    assert "coverage" not in decisions({"scope": "proj"}, db, tmp_path)
+    assert "no_tracked_files" not in check(db, tmp_path)["coverage"]["reasons"]
+
+
+def test_cli_min_coverage_on_decision_check(
+    db: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "a.txt").write_text("1", encoding="utf-8")
+    decide(db, tmp_path, "D1", files=["a.txt"])
+    decide(db, tmp_path, "D2")
+    spec = tmp_path / "check.json"
+    spec.write_text(json.dumps({"scope": "proj", "action": "check"}), encoding="utf-8")
+    base = ["decisions", str(spec), "--database", str(db), "--root", str(tmp_path)]
+    base += ["-o", str(tmp_path / "r.json")]
+    assert main([*base, "--min-coverage", "50"]) == 0
+    assert "coverage: decided 1 of 2 decisions; 1 could not be checked" in capsys.readouterr().err
+    assert main([*base, "--min-coverage", "51"]) == 3
 
 
 README = "For help, write to support@help.example.\n\nLast edited: June.\n"

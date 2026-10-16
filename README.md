@@ -74,7 +74,9 @@ If the file changes but every anchor is still in it, `check` reports `FILE_CHANG
 
 ## Options and exit codes
 
-All commands take `--database FILE` (default `correctionbank.sqlite3`), `-o report.json`, `--html report.html` and `--strict`. Exit codes: 0 completed, 1 `--strict` and something other than `ADDED`, `DUPLICATE_IGNORED`, `PASS`, `UNCHANGED` or `FILE_CHANGED_DECISION_INTACT` was reported, 2 unusable input or a rejected change.
+All commands take `--database FILE` (default `correctionbank.sqlite3`), `-o report.json`, `--html report.html` and `--strict`. Exit codes: 0 completed, 1 `--strict` and something other than `ADDED`, `DUPLICATE_IGNORED`, `PASS`, `UNCHANGED` or `FILE_CHANGED_DECISION_INTACT` was reported, 2 unusable input or a rejected change, 3 `--min-coverage` was not met.
+
+**Coverage.** `failures` with `"action": "evaluate"` and `decisions` with `"action": "check"` add a `coverage` object and print a line on stderr. For failure cases the items are the stored cases, and a case with no supplied output is undecided (`no_output_supplied`); outputs that match no stored case are noted. For decisions the items are the current (not superseded) decisions, and a decision with no tracked files is undecided (`no_tracked_files`) because it can never report drift. `--min-coverage PCT` exits 3 when fewer than PCT percent of items were decided and nothing else failed. Adding or listing records has no coverage block.
 
 ## Limits
 
