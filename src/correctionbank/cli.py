@@ -45,7 +45,7 @@ COMMANDS = {
     "decisions": Command(
         _decisions,
         "Record decisions and check tracked files for drift",
-        frozenset({"ADDED", "UNCHANGED"}),
+        frozenset({"ADDED", "UNCHANGED", "FILE_CHANGED_DECISION_INTACT"}),
         options=[DB_OPTION, ROOT_OPTION],
         protect=("database",),
     ),

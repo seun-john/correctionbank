@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `decisions`: a tracked file can carry anchor text, `{"path": "README.md", "anchor": "support@help.example"}` (or `"anchors": [...]`). When the file changes but every anchor is still present, `check` reports `FILE_CHANGED_DECISION_INTACT` instead of `DECISION_DRIFT`. If an anchor is gone, or the file is missing, it is still `DECISION_DRIFT`. The anchor must exist in the file when the decision is recorded. `--strict` does not fail on `FILE_CHANGED_DECISION_INTACT`.
+- Tracked files given as plain paths behave exactly as before, and their stored records are unchanged.
+
 ## 0.1.0
 
 First release.

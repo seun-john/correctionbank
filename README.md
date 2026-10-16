@@ -61,11 +61,20 @@ Expectations are deterministic and all must pass: `equals` (exact JSON equality)
 correctionbank decisions check.json --root /path/to/project
 ```
 
-Adding records the SHA-256 of each tracked file. `check` (with `{"scope": "proj", "action": "check"}`) compares the files with those hashes: `UNCHANGED` or `DECISION_DRIFT` (the file changed or is gone), plus `UNAPPROVED_RECORD` when nobody is named as approver. Drift means "look at this again", not "the decision was broken". A new decision can supersede a current one in the same scope; superseded decisions are no longer checked. Each record carries its own hash, and a record that no longer matches it is reported as `TAMPERED_RECORD`.
+Adding records the SHA-256 of each tracked file. `check` (with `{"scope": "proj", "action": "check"}`) compares the files with those hashes: `UNCHANGED` or `DECISION_DRIFT` (the file changed or is gone), plus `UNAPPROVED_RECORD` when nobody is named as approver.
+
+A hash of the whole file reports drift for any edit, including one that has nothing to do with the decision. To say what the decision depends on, give the file as an object with anchor text, a snippet that states the decision (an address, a limit, a version):
+
+```json
+{"scope": "proj", "action": "add", "id": "D2", "title": "Support contact is fixed", "rationale": "Monitored mailbox",
+ "approved_by": "Seun", "files": [{"path": "README.md", "anchor": "support@help.example"}]}
+```
+
+If the file changes but every anchor is still in it, `check` reports `FILE_CHANGED_DECISION_INTACT` (not an error under `--strict`). If an anchor has gone or the file is missing, it is `DECISION_DRIFT`. The anchor must be present when the decision is recorded; use `"anchors": [...]` for several. Anchors are matched as exact text, so they cannot tell that a nearby sentence was reworded in a way that changes the meaning. Drift means "look at this again", not "the decision was broken". A new decision can supersede a current one in the same scope; superseded decisions are no longer checked. Each record carries its own hash, and a record that no longer matches it is reported as `TAMPERED_RECORD`.
 
 ## Options and exit codes
 
-All commands take `--database FILE` (default `correctionbank.sqlite3`), `-o report.json`, `--html report.html` and `--strict`. Exit codes: 0 completed, 1 `--strict` and something other than `ADDED`, `DUPLICATE_IGNORED`, `PASS` or `UNCHANGED` was reported, 2 unusable input or a rejected change.
+All commands take `--database FILE` (default `correctionbank.sqlite3`), `-o report.json`, `--html report.html` and `--strict`. Exit codes: 0 completed, 1 `--strict` and something other than `ADDED`, `DUPLICATE_IGNORED`, `PASS`, `UNCHANGED` or `FILE_CHANGED_DECISION_INTACT` was reported, 2 unusable input or a rejected change.
 
 ## Limits
 

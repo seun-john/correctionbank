@@ -175,6 +175,97 @@ def test_drift_and_missing_file(db: Path, tmp_path: Path) -> None:
     assert result["findings"][0]["evidence"]["actual"] is None
 
 
+README = "For help, write to support@help.example.\n\nLast edited: June.\n"
+
+
+def test_edit_elsewhere_in_file_is_not_drift_when_anchor_holds(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(README, encoding="utf-8")
+    decide(db, tmp_path, "D1", files=[{"path": "README.md", "anchor": "support@help.example"}])
+    assert statuses(check(db, tmp_path)) == ["UNCHANGED"]
+    (tmp_path / "README.md").write_text(README.replace("June", "July"), encoding="utf-8")
+    result = check(db, tmp_path)
+    assert statuses(result) == ["FILE_CHANGED_DECISION_INTACT"]
+    assert result["findings"][0]["evidence"]["anchors"] == ["support@help.example"]
+
+
+def test_drift_when_the_anchor_text_changes_or_disappears(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(README, encoding="utf-8")
+    decide(db, tmp_path, "D1", files=[{"path": "README.md", "anchor": "support@help.example"}])
+    (tmp_path / "README.md").write_text(README.replace("support@", "sales@"), encoding="utf-8")
+    result = check(db, tmp_path)
+    assert statuses(result) == ["DECISION_DRIFT"]
+    assert "anchor" in result["findings"][0]["message"]
+    (tmp_path / "README.md").unlink()
+    assert statuses(check(db, tmp_path)) == ["DECISION_DRIFT"]
+
+
+def test_every_anchor_must_still_be_present(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "cfg.toml").write_text("timeout = 30\nretries = 3\n", encoding="utf-8")
+    decide(
+        db, tmp_path, "D1", files=[{"path": "cfg.toml", "anchors": ["timeout = 30", "retries = 3"]}]
+    )
+    (tmp_path / "cfg.toml").write_text("timeout = 30\nretries = 5\n", encoding="utf-8")
+    assert statuses(check(db, tmp_path)) == ["DECISION_DRIFT"]
+
+
+def test_plain_paths_still_drift_on_any_change(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(README, encoding="utf-8")
+    decide(db, tmp_path, "D1", files=["README.md"])
+    (tmp_path / "README.md").write_text(README.replace("June", "July"), encoding="utf-8")
+    assert statuses(check(db, tmp_path)) == ["DECISION_DRIFT"]
+
+
+def test_plain_path_records_are_stored_exactly_as_before(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("1", encoding="utf-8")
+    decide(db, tmp_path, "D1", files=["a.txt"])
+    entry = decisions({"scope": "proj"}, db, tmp_path)["decisions"][0]["files"][0]
+    assert set(entry) == {"path", "sha256"}
+
+
+def test_anchor_must_exist_when_the_decision_is_recorded(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(README, encoding="utf-8")
+    with pytest.raises(InputError, match="Anchor text not found"):
+        decide(db, tmp_path, "D1", files=[{"path": "README.md", "anchor": "nobody@nowhere"}])
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"path": "README.md", "anchor": ""},
+        {"path": "README.md", "anchors": "x"},
+        {"path": "README.md", "anchor": "x", "anchors": ["x"]},
+        {"anchor": "x"},
+        5,
+    ],
+)
+def test_malformed_tracked_entries_are_rejected(db: Path, tmp_path: Path, bad: Any) -> None:
+    (tmp_path / "README.md").write_text(README, encoding="utf-8")
+    with pytest.raises(InputError):
+        decide(db, tmp_path, "D1", files=[bad])
+
+
+def test_intact_anchor_does_not_fail_strict(db: Path, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(README, encoding="utf-8")
+    decide(db, tmp_path, "D1", files=[{"path": "README.md", "anchor": "support@help.example"}])
+    (tmp_path / "README.md").write_text(README.replace("June", "July"), encoding="utf-8")
+    spec = tmp_path / "check.json"
+    spec.write_text(json.dumps({"scope": "proj", "action": "check"}), encoding="utf-8")
+    argv = [
+        "decisions",
+        str(spec),
+        "--database",
+        str(db),
+        "--root",
+        str(tmp_path),
+        "--strict",
+        "-o",
+        str(tmp_path / "r.json"),
+    ]
+    assert main(argv) == 0
+    (tmp_path / "README.md").write_text(README.replace("support@", "sales@"), encoding="utf-8")
+    assert main(argv) == 1
+
+
 def test_unapproved_decision_is_flagged(db: Path, tmp_path: Path) -> None:
     decide(db, tmp_path, "D1", approved_by=None)
     assert "UNAPPROVED_RECORD" in statuses(check(db, tmp_path))

@@ -198,6 +198,30 @@ def failures(data: dict[str, Any], db_path: str | Path) -> dict[str, Any]:
 # -- decisions -----------------------------------------------------------------------------
 
 
+def _tracked_entry(entry: Any) -> tuple[str, list[str]]:
+    """A tracked file is a path, or {"path": ..., "anchor": "text"} / {"anchors": [...]}.
+
+    An anchor is a snippet that states the decision (an address, a limit, a version). If the
+    file changes but every anchor is still in it, the change is reported as
+    FILE_CHANGED_DECISION_INTACT instead of DECISION_DRIFT.
+    """
+    if isinstance(entry, str):
+        return entry, []
+    if not isinstance(entry, dict):
+        raise InputError("Each tracked file must be a path or an object with a 'path'")
+    relative = require(entry, "path", str)
+    if "anchor" in entry and "anchors" in entry:
+        raise InputError("Use either 'anchor' or 'anchors', not both")
+    raw = entry.get("anchors", [entry["anchor"]] if "anchor" in entry else [])
+    if not isinstance(raw, list) or not all(isinstance(a, str) and a for a in raw):
+        raise InputError("Anchors must be non-empty strings")
+    return relative, raw
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def decisions(data: dict[str, Any], db_path: str | Path, root: str | Path) -> dict[str, Any]:
     scope = _scope(data)
     action = _action(data, ("add", "list", "check"))
@@ -207,13 +231,21 @@ def decisions(data: dict[str, Any], db_path: str | Path, root: str | Path) -> di
         if not ident.strip():
             raise InputError("Decision id must not be empty")
         tracked = []
-        for relative in data.get("files", []):
+        for entry in data.get("files", []):
+            relative, anchors = _tracked_entry(entry)
             path = inside(root, relative)
             if path == Path(db_path).resolve():
                 raise InputError("Do not track the decision database itself")
             if not path.is_file():
                 raise InputError(f"Tracked file does not exist: {relative}")
-            tracked.append({"path": relative, "sha256": file_digest(path)})
+            record: dict[str, Any] = {"path": relative, "sha256": file_digest(path)}
+            if anchors:
+                text = _read_text(path)
+                missing = [a for a in anchors if a not in text]
+                if missing:
+                    raise InputError(f"Anchor text not found in {relative}: {missing[0]!r}")
+                record["anchors"] = anchors
+            tracked.append(record)
         new = {
             "id": ident,
             "scope": scope,
@@ -281,18 +313,38 @@ def decisions(data: dict[str, Any], db_path: str | Path, root: str | Path) -> di
                 path = inside(root, entry["path"])
                 actual = file_digest(path) if path.is_file() else None
                 same = actual == entry["sha256"]
-                out.append(
-                    finding(
-                        "UNCHANGED" if same else "DECISION_DRIFT",
-                        "File is as it was when the decision was made."
-                        if same
-                        else "File differs from, or is missing since, the decision. Review it.",
-                        decision=record["id"],
-                        path=entry["path"],
-                        expected=entry["sha256"],
-                        actual=actual,
-                    )
+                anchors = entry.get("anchors") or []
+                intact = (
+                    not same
+                    and actual is not None
+                    and bool(anchors)
+                    and all(a in _read_text(path) for a in anchors)
                 )
+                if same:
+                    status, message = "UNCHANGED", "File is as it was when the decision was made."
+                elif intact:
+                    status, message = (
+                        "FILE_CHANGED_DECISION_INTACT",
+                        "The file changed, but every anchor text recorded for this decision is "
+                        "still present. Look at the file only if the change could matter.",
+                    )
+                else:
+                    status, message = (
+                        "DECISION_DRIFT",
+                        "File differs from, or is missing since, the decision. Review it."
+                        if not anchors
+                        else "File differs from, or is missing since, the decision, and an "
+                        "anchor text recorded for it is gone. Review it.",
+                    )
+                evidence: dict[str, Any] = {
+                    "decision": record["id"],
+                    "path": entry["path"],
+                    "expected": entry["sha256"],
+                    "actual": actual,
+                }
+                if anchors:
+                    evidence["anchors"] = anchors
+                out.append(finding(status, message, **evidence))
     return report(
         "CorrectionBank Decisions",
         out,
